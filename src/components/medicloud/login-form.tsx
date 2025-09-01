@@ -3,6 +3,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
+import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Button } from '@/components/ui/button';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -10,12 +11,12 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardFooter, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import type { Patient } from '@/lib/types';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
+import { authenticatePatient } from '@/lib/auth';
 
 type Page = 'loginChoice' | 'login' | 'createAccount' | 'patientProfile' | 'faceLogin';
 
 interface LoginFormProps {
-  patients: Patient[];
   onLoginSuccess: (patient: Patient) => void;
   setPage: Dispatch<SetStateAction<Page>>;
 }
@@ -25,8 +26,10 @@ const formSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
-export default function LoginForm({ patients, onLoginSuccess, setPage }: LoginFormProps) {
+export default function LoginForm({ onLoginSuccess, setPage }: LoginFormProps) {
   const { toast } = useToast();
+  const [isValidating, setIsValidating] = useState(false);
+
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -35,23 +38,43 @@ export default function LoginForm({ patients, onLoginSuccess, setPage }: LoginFo
     },
   });
 
-  function onSubmit(values: z.infer<typeof formSchema>) {
-    const patient = patients.find(p => p.id.toLowerCase() === values.patientId.toLowerCase() && p.password === values.password);
+  async function onSubmit(values: z.infer<typeof formSchema>) {
+    if (isValidating) return;
 
-    if (patient) {
-      toast({
-        title: 'Login Successful',
-        description: `Welcome back, ${patient.firstName}!`,
-      });
-      onLoginSuccess(patient);
-    } else {
+    setIsValidating(true);
+
+    try {
+      const result = await authenticatePatient(values.patientId, values.password);
+
+      if (result.success && result.patient) {
+        toast({
+          title: 'Login Successful',
+          description: `Welcome back, ${result.patient.firstName}!`,
+        });
+
+        onLoginSuccess(result.patient);
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Login Failed',
+          description: result.error || 'Invalid Patient ID or Password.',
+        });
+      }
+    } catch (error) {
+      console.error('Login error:', error);
       toast({
         variant: 'destructive',
-        title: 'Login Failed',
-        description: 'Invalid Patient ID or Password.',
+        title: 'Login Error',
+        description: 'An unexpected error occurred. Please try again later.',
       });
+    } finally {
+      setIsValidating(false);
     }
   }
+
+  const handleCreateAccount = () => {
+    setPage('createAccount');
+  };
 
   return (
     <Card className="w-full max-w-md mx-auto shadow-lg">
@@ -72,7 +95,11 @@ export default function LoginForm({ patients, onLoginSuccess, setPage }: LoginFo
                 <FormItem>
                   <FormLabel>Patient ID</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g., PAT12345" {...field} />
+                    <Input
+                      placeholder="e.g., PAT12345"
+                      {...field}
+                      disabled={isValidating}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -85,7 +112,12 @@ export default function LoginForm({ patients, onLoginSuccess, setPage }: LoginFo
                 <FormItem>
                   <FormLabel>Password</FormLabel>
                   <FormControl>
-                    <Input type="password" placeholder="••••••••" {...field} />
+                    <Input
+                      type="password"
+                      placeholder="••••••••"
+                      {...field}
+                      disabled={isValidating}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -93,8 +125,25 @@ export default function LoginForm({ patients, onLoginSuccess, setPage }: LoginFo
             />
           </CardContent>
           <CardFooter className="flex flex-col gap-4">
-            <Button type="submit" className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">Login</Button>
-            <Button variant="link" onClick={() => setPage('createAccount')}>
+            <Button
+              type="submit"
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+              disabled={isValidating}
+            >
+              {isValidating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Validating...
+                </>
+              ) : (
+                'Login'
+              )}
+            </Button>
+            <Button
+              variant="link"
+              onClick={handleCreateAccount}
+              disabled={isValidating}
+            >
               Don't have an account? Create one
             </Button>
           </CardFooter>

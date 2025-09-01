@@ -6,19 +6,18 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import type { Patient } from '@/lib/types';
-import { ArrowLeft, Camera, RefreshCw } from 'lucide-react';
-import { verifyFace } from '@/ai/flows/verify-face-flow';
+import { ArrowLeft, Camera, RefreshCw, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
+import { authenticatePatientWithFace } from '@/lib/auth';
 
 type Page = 'loginChoice' | 'login' | 'createAccount' | 'patientProfile' | 'faceLogin';
 
 interface FaceLoginFormProps {
-  patients_db: Patient[];
   onLoginSuccess: (patient: Patient) => void;
   setPage: Dispatch<SetStateAction<Page>>;
 }
@@ -27,28 +26,52 @@ const formSchema = z.object({
   patientId: z.string().min(1, 'Please select a patient profile.'),
 });
 
-
-export default function FaceLoginForm({ patients_db, onLoginSuccess, setPage }: FaceLoginFormProps) {
+export default function FaceLoginForm({ onLoginSuccess, setPage }: FaceLoginFormProps) {
   const { toast } = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
-  
+  const [isLoadingPatients, setIsLoadingPatients] = useState(false);
+  const [patients, setPatients] = useState<Patient[]>([]);
+
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       patientId: '',
     },
   });
-  
+
+  // Fetch patients from database on component mount
+  useEffect(() => {
+    const fetchPatients = async () => {
+      setIsLoadingPatients(true);
+      try {
+        const { getAllPatients } = await import('@/lib/auth');
+        const fetchedPatients = await getAllPatients();
+        setPatients(fetchedPatients);
+      } catch (error) {
+        console.error('Error fetching patients:', error);
+        toast({
+          variant: 'destructive',
+          title: 'Database Error',
+          description: 'Unable to load patient profiles. Please try again later.',
+        });
+      } finally {
+        setIsLoadingPatients(false);
+      }
+    };
+
+    fetchPatients();
+  }, [toast]);
+
   useEffect(() => {
     const getCameraPermission = async () => {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setHasCameraPermission(false);
         toast({
-            variant: 'destructive',
-            title: 'Camera Not Supported',
-            description: 'Your browser does not support camera access.',
+          variant: 'destructive',
+          title: 'Camera Not Supported',
+          description: 'Your browser does not support camera access.',
         });
         return;
       }
@@ -71,15 +94,15 @@ export default function FaceLoginForm({ patients_db, onLoginSuccess, setPage }: 
     };
 
     getCameraPermission();
-    
+
     return () => {
-        if (videoRef.current && videoRef.current.srcObject) {
-            const stream = videoRef.current.srcObject as MediaStream;
-            stream.getTracks().forEach(track => track.stop());
-        }
+      if (videoRef.current && videoRef.current.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach(track => track.stop());
+      }
     }
   }, [toast]);
-  
+
   const captureFrame = (): string | null => {
     if (!videoRef.current) return null;
     const canvas = document.createElement('canvas');
@@ -93,16 +116,6 @@ export default function FaceLoginForm({ patients_db, onLoginSuccess, setPage }: 
 
   const handleVerify = async (values: z.infer<typeof formSchema>) => {
     if (isVerifying) return;
-    
-    const selectedPatient = patients_db.find(p => p.id === values.patientId);
-    if (!selectedPatient) {
-        toast({
-            variant: 'destructive',
-            title: 'Patient Not Found',
-            description: 'Could not find the selected patient profile.',
-        });
-        return;
-    }
 
     const liveImage = captureFrame();
     if (!liveImage) {
@@ -114,26 +127,23 @@ export default function FaceLoginForm({ patients_db, onLoginSuccess, setPage }: 
     toast({ title: 'Verifying face...', description: 'Please hold still.' });
 
     try {
-      const result = await verifyFace({
-        faceImage1DataUri: selectedPatient.faceImageBase64,
-        faceImage2DataUri: liveImage,
-      });
+      const result = await authenticatePatientWithFace(values.patientId, liveImage);
 
-      if (result.isSamePerson) {
+      if (result.success && result.patient) {
         toast({
           title: 'Login Successful!',
-          description: `Welcome back, ${selectedPatient.firstName}! Confidence: ${(result.confidence * 100).toFixed(2)}%`,
+          description: `Welcome back, ${result.patient.firstName}! Confidence: ${result.confidence ? (result.confidence * 100).toFixed(2) + '%' : 'High'}`,
         });
-        onLoginSuccess(selectedPatient);
+        onLoginSuccess(result.patient);
       } else {
         toast({
           variant: 'destructive',
           title: 'Face Verification Failed',
-          description: result.reason || 'The faces do not match. Please try again.',
+          description: result.error || 'The faces do not match. Please try again.',
         });
       }
     } catch (error) {
-      console.error(error);
+      console.error('Face verification error:', error);
       toast({
         variant: 'destructive',
         title: 'An error occurred during verification.',
@@ -146,7 +156,7 @@ export default function FaceLoginForm({ patients_db, onLoginSuccess, setPage }: 
 
   return (
     <Card className="w-full max-w-md mx-auto shadow-lg">
-       <CardHeader>
+      <CardHeader>
         <Button variant="ghost" size="icon" className="absolute top-4 left-4" onClick={() => setPage('loginChoice')}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
@@ -155,53 +165,92 @@ export default function FaceLoginForm({ patients_db, onLoginSuccess, setPage }: 
       </CardHeader>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(handleVerify)}>
-            <CardContent className="space-y-4">
-                <div className="relative aspect-video w-full overflow-hidden rounded-lg border bg-muted">
-                    <video ref={videoRef} className="w-full aspect-video rounded-md" autoPlay muted playsInline />
-                    {hasCameraPermission === false && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                            <p className="text-white text-center p-4">Camera access is required. Please enable it in your browser settings.</p>
-                        </div>
-                    )}
+          <CardContent className="space-y-4">
+            <div className="relative aspect-video w-full overflow-hidden rounded-lg border bg-muted">
+              <video ref={videoRef} className="w-full aspect-video rounded-md" autoPlay muted playsInline />
+              {hasCameraPermission === false && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                  <p className="text-white text-center p-4">Camera access is required. Please enable it in your browser settings.</p>
                 </div>
-                
-                {hasCameraPermission === false && (
-                    <Alert variant="destructive">
-                    <AlertTitle>Camera Access Required</AlertTitle>
-                    <AlertDescription>
-                        Please allow camera access to use this feature. You may need to refresh the page after granting permission.
-                    </AlertDescription>
-                    </Alert>
-                )}
+              )}
+            </div>
 
-                <FormField
-                    control={form.control}
-                    name="patientId"
-                    render={({ field }) => (
-                        <FormItem>
-                            <FormLabel>Select Patient Profile</FormLabel>
-                            <Select onValueChange={field.onChange} defaultValue={field.value} disabled={patients_db.length === 0}>
-                                <FormControl>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Select your patient profile..." />
-                                    </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                    {patients_db.length > 0 ? patients_db.map(p => (
-                                        <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName} ({p.id})</SelectItem>
-                                    )) : <SelectItem value="none" disabled>No patient accounts exist</SelectItem>}
-                                </SelectContent>
-                            </Select>
-                            <FormMessage />
-                        </FormItem>
-                    )}
-                />
-            </CardContent>
-            <CardFooter>
-                <Button type="submit" disabled={isVerifying || !hasCameraPermission || !form.watch('patientId')} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground">
-                {isVerifying ? <><RefreshCw className="mr-2 h-4 w-4 animate-spin" /> Verifying...</> : <><Camera className="mr-2 h-4 w-4" /> Verify Face</>}
-                </Button>
-            </CardFooter>
+            {hasCameraPermission === false && (
+              <Alert variant="destructive">
+                <AlertTitle>Camera Access Required</AlertTitle>
+                <AlertDescription>
+                  Please allow camera access to use this feature. You may need to refresh the page after granting permission.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <FormField
+              control={form.control}
+              name="patientId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Select Patient Profile</FormLabel>
+                  <Select
+                    onValueChange={field.onChange}
+                    defaultValue={field.value}
+                    disabled={isLoadingPatients || patients.length === 0}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder={
+                          isLoadingPatients
+                            ? "Loading profiles..."
+                            : patients.length === 0
+                              ? "No patient accounts exist"
+                              : "Select your patient profile..."
+                        } />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {isLoadingPatients ? (
+                        <SelectItem value="loading" disabled>
+                          <div className="flex items-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Loading profiles...
+                          </div>
+                        </SelectItem>
+                      ) : patients.length > 0 ? (
+                        patients.map(p => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.firstName} {p.lastName} ({p.id})
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="none" disabled>
+                          No patient accounts exist
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </CardContent>
+          <CardFooter>
+            <Button
+              type="submit"
+              disabled={isVerifying || !hasCameraPermission || !form.watch('patientId') || isLoadingPatients}
+              className="w-full bg-accent hover:bg-accent/90 text-accent-foreground"
+            >
+              {isVerifying ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Verifying...
+                </>
+              ) : (
+                <>
+                  <Camera className="mr-2 h-4 w-4" />
+                  Verify Face
+                </>
+              )}
+            </Button>
+          </CardFooter>
         </form>
       </Form>
     </Card>

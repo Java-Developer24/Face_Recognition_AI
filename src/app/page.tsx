@@ -58,7 +58,7 @@ export default function Home() {
     setCurrentPatient(null);
     setPage('loginChoice');
   };
-  
+
   const handleUpdatePatient = (updatedPatient: Patient) => {
     setCurrentPatient(updatedPatient);
     updateAndSavePatients(prevDB => prevDB.map(p => p.id === updatedPatient.id ? updatedPatient : p));
@@ -67,13 +67,13 @@ export default function Home() {
 
   const renderPage = () => {
     if (!isInitialized) {
-        return <div className="text-center">Loading Patient Data...</div>;
+      return <div className="text-center">Loading Patient Data...</div>;
     }
     switch (page) {
       case 'login':
-        return <LoginForm patients={patientsDB} onLoginSuccess={handleLogin} setPage={setPage} />;
+        return <LoginForm onLoginSuccess={handleLogin} setPage={setPage} />;
       case 'faceLogin':
-        return <FaceLoginForm patients_db={patientsDB} onLoginSuccess={handleLogin} setPage={setPage} />;
+        return <FaceLoginForm onLoginSuccess={handleLogin} setPage={setPage} />;
       case 'createAccount':
         return <CreateAccountForm onCreateAccount={handleCreateAccount} setPage={setPage} />;
       case 'patientProfile':
@@ -100,8 +100,8 @@ export default function Home() {
         {renderPage()}
       </main>
       {page === 'loginChoice' && (
-         <footer className="fixed bottom-0 left-0 right-0 p-4 text-center text-xs text-muted-foreground">
-            <p>&copy; {new Date().getFullYear()} RMM Hospital (ENT). All Rights Reserved.</p>
+        <footer className="fixed bottom-0 left-0 right-0 p-4 text-center text-xs text-muted-foreground">
+          <p>&copy; {new Date().getFullYear()} RMM Hospital (ENT). All Rights Reserved.</p>
         </footer>
       )}
     </div>

@@ -81,40 +81,61 @@ const addDefaultDataIfNeeded = (patients: Patient[]): Patient[] => {
   });
 };
 
-
-async function readPatientsFromFile(): Promise<Patient[]> {
-  try {
-    const fileContent = await fs.readFile(dataFilePath, 'utf-8');
-    const patients = JSON.parse(fileContent) as Patient[];
-    return addDefaultDataIfNeeded(patients);
-  } catch (error: any) {
-    if (error.code === 'ENOENT') {
-      // File doesn't exist, so we return an empty array.
-      return [];
-    }
-    console.error('Error reading from patient data file:', error);
-    throw new Error('Could not read patient data.');
-  }
-}
-
-async function writePatientsToFile(patients: Patient[]): Promise<void> {
-  try {
-    await fs.writeFile(dataFilePath, JSON.stringify(patients, null, 2), 'utf-8');
-  } catch (error) {
-    console.error('Error writing to patient data file:', error);
-    throw new Error('Could not save patient data.');
-  }
-}
-
 export async function getPatients(): Promise<Patient[]> {
   try {
     console.log('🔄 Fetching patients from MongoDB...');
-    await connectDB(); // ← HERE: connectDB() is called
+    console.log('🔗 Attempting to connect to MongoDB...');
+
+    await connectDB();
+    console.log('✅ MongoDB connection successful');
+
+    console.log('🔍 Querying PatientModel.find({})...');
     const patients = await PatientModel.find({}).lean();
+    console.log(`📊 Raw MongoDB response:`, patients);
     console.log(`✅ Retrieved ${patients.length} patients from MongoDB`);
-    return patients.map(addDefaultDataIfNeeded);
+
+    if (patients.length === 0) {
+      console.log('⚠️ No patients found in database - this might be normal for a new database');
+    }
+
+    // Convert MongoDB documents to Patient objects
+    const patientObjects = patients.map(patient => ({
+      id: patient.id,
+      password: patient.password,
+      firstName: patient.firstName,
+      middleName: patient.middleName,
+      lastName: patient.lastName,
+      houseAddress: patient.houseAddress,
+      bloodGroup: patient.bloodGroup,
+      age: patient.age,
+      gender: patient.gender,
+      contactNumber: patient.contactNumber,
+      alternativeContact: patient.alternativeContact,
+      allergies: patient.allergies || [],
+      diseases: patient.diseases || [],
+      emergencyContactName: patient.emergencyContactName,
+      emergencyContactRelation: patient.emergencyContactRelation,
+      emergencyContactPhone: patient.emergencyContactPhone,
+      faceImageBase64: patient.faceImageBase64,
+      signatureBase64: patient.signatureBase64 || '',
+      billPayments: patient.billPayments || [],
+      lastVisit: patient.lastVisit,
+      previousTreatments: patient.previousTreatments || [],
+      notes: patient.notes || ''
+    })) as Patient[];
+
+    console.log(`🔄 Converting ${patientObjects.length} patients to Patient objects...`);
+    const result = addDefaultDataIfNeeded(patientObjects);
+    console.log(`✅ Final result: ${result.length} patients with default data`);
+
+    return result;
   } catch (error) {
     console.error('❌ Error fetching patients from MongoDB:', error);
+    console.error('❌ Error details:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    });
     throw new Error('Could not read patient data.');
   }
 }
@@ -122,7 +143,7 @@ export async function getPatients(): Promise<Patient[]> {
 export async function savePatients(patients: Patient[]): Promise<void> {
   try {
     console.log(`🔄 Saving ${patients.length} patients to MongoDB...`);
-    await connectDB(); // ← HERE: connectDB() is called
+    await connectDB();
     await PatientModel.deleteMany({});
     if (patients.length > 0) {
       await PatientModel.insertMany(patients);
